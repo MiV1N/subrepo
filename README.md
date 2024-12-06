@@ -1,0 +1,2 @@
+# subrepo
+git new command
