@@ -1,4 +1,5 @@
 #! /bin/bash
+# set -x
 
 useage(){
     echo "Usage: git subrepo <command> [options] <subrepo_name>"
@@ -87,6 +88,51 @@ log() {
 # log "ERROR" "This is an error message."
 # exit 0
 
+# gitignore文件操作
+gitignore(){
+    local confPath=$1
+    local action=$2
+    local entry=$3
+    local temp_file=".tmpgitignore"
+
+    # 给目录添加最后的/
+    ignore_path="${entry}"
+    # 检查字符串最后一个字符是否是 /
+    if [[ "${entry: -1}" != "/" ]]; then
+        # 如果不是，则添加 /
+        ignore_path="${entry}/"
+    fi
+    log "DEBUG" "ignore_path:$ignore_path"
+
+    if [[ ! -f "$confPath" ]]; then
+        log "INFO"  "File does not exist. create it"
+        touch $confPath
+    fi
+
+     case "$action" in
+        add)
+            # 添加条目到文件
+            if grep -q "$ignore_path" "$confPath"; then
+                log "ERROR"  "ignore_path '$ignore_path' already exists."
+                return 1
+            else
+                cat "$confPath" > "$temp_file"
+                echo "$ignore_path" >> "$temp_file"
+                mv "$temp_file" "$confPath"
+            fi
+            ;;
+        delete)
+            # 删除条目
+            perl -pe "s#$ignore_path\s*##"  "$confPath" > "$temp_file"
+            mv "$temp_file" "$confPath"
+            ;;
+        *)
+            log "ERROR"  "Invalid action. Use 'add', 'delete'."
+            return 1
+            ;;
+    esac
+}
+
 
 # 操作 .gitsubrepo 格式的文件的函数
 # 参数1: 操作类型（add, delete, get）
@@ -95,12 +141,13 @@ log() {
 config() {
     local confPath=$1
     local action=$2
+    # local entry=$(echo $3 |sed  's#/#\\/#g')
     local entry=$3
     local url=$4
     local temp_file=".tmp"
 
     if [[ ! -f "$confPath" ]]; then
-        log "ERROR"  "File does not exist. create it"
+        log "INFO"  "File does not exist. create it"
         touch $confPath
     fi
 
@@ -120,14 +167,16 @@ config() {
             ;;
         delete)
             # 删除条目
-            perl -0777 -pe "s#\[subrepo\s+\"$entry\"\]\s*\r?\n\s*path\s*=\s*(.*)\r?\n(\s*\r?\n)##"  "$confPath" > "$temp_file"
+            log "DEBUG" "$entry"
+            #先删除第一行空行，然后匹配subrepo行，之后是path行(不删除换行，保留下面的一行内容)
+            perl -0777 -pe "s#(\r?\n)(\s*\[subrepo\s+\"$entry\"\]\s*\r?\n)(\s*path\s*=\s*.*)##"  "$confPath" > "$temp_file"
             mv "$temp_file" "$confPath"
             ;;
         get)
             if [[ -n "$entry" ]]; then
                 # 获取指定条目的 path
-                local path=$(awk "/$entry\"\]/{getline nextline;print nextline}" "$confPath" | awk -F= '{print $2}')
-                # local path=$(grep "^\[subrepo\s+\"$entry\"\]\s*\r*\n\s*path\s*=\s*(.*)$" "$confPath" | grep "path" | cut -d ' ' -f 3)
+                local path=$(awk -v p="$entry\"]" '$0~p {getline nextline;print nextline}' "$confPath" | awk -F= '{print $2}')
+                # local path=$(awk "/$entry\"\]/{getline nextline;print nextline}" "$confPath" | awk -F= '{print $2}')
                 if [[ -z "$path" ]]; then
                     log "ERROR"  "Entry '$entry' not found."
                     return 1
@@ -155,8 +204,8 @@ config() {
 # rm  .gitsubrepo  
 
 # # 调用函数添加条目
-# config ".gitsubrepo" "add"  "subrepo_test" "https://github.com/MiV1N/subrepo.git"
-# config ".gitsubrepo" "add"  "subrepo_test2" "https://github.com/MiV1N/subrepo.git"
+# config ".gitsubrepo" "add"  "subrepo_test/test" "https://github.com/MiV1N/subrepo.git"
+# config ".gitsubrepo" "add"  "subrepo_test2/test2" "https://github.com/MiV1N/subrepo.git"
 
 # # 调用函数获取指定条目的路径
 # output=$(config ".gitsubrepo" "get" "subrepo_test")
@@ -171,10 +220,35 @@ config() {
 
 
 # # 调用函数删除条目
-# config ".gitsubrepo" "delete" "subrepo_test"
+# config ".gitsubrepo" "delete" "subrepo_test/test"
 
 # exit 0
 
+add() {
+    log "DEBUG"  "Executing add with params: $*"
+
+    repository_url=$1 
+    path=$2
+
+    # 检查参数
+    if [ -z "$repository_url" ]; then
+        log "DEBUG" "add 传入的repository_url参数为空"
+        useage
+        return 1
+    fi
+    if [ -z "$path" ]; then
+        log "DEBUG" "add 传入的path参数为空"
+        useage
+        return 1
+    fi
+
+    # 配置gitignore
+    gitignore ".gitignore" "add" "$path"
+
+    # 添加配置文件
+    config ".gitsubrepo" "add"  "$path" "$repository_url"
+
+}
 
 # 初始化函数
 init() {
@@ -229,9 +303,13 @@ del() {
     # 删除配置
     config ".gitsubrepo" "delete" "$subrepo_name"
 
+    # 删除gitignore
+    gitignore ".gitignore" "delete" "$subrepo_name"
+
+
     # 删除目录
     if [ -d "$subrepo_name" ]; then
-        rm -r $subrepo_name
+        rm -rf $subrepo_name
     fi
 }
 
@@ -240,39 +318,13 @@ pull() {
     git pull "$*"
 }
 
-add() {
-    log "DEBUG"  "Executing add with params: $*"
-
-    repository_url=$1 
-    path=$2
-
-    # 检查参数
-    if [ -z "$repository_url" ]; then
-        log "DEBUG" "add 传入的repository_url参数为空"
-        useage
-        return 1
-    fi
-    if [ -z "$path" ]; then
-        log "DEBUG" "add 传入的path参数为空"
-        useage
-        return 1
-    fi
-
-    
-
-    # 添加配置文件
-    config ".gitsubrepo" "add"  "$path" "$repository_url"
-
-}
 
 checkout() {
     echo "Executing checkout with params: $*"
     # 在这里添加 add 操作的代码
+
     git checkout "$*"
 }
-
-
-
 
 
 # 检查是否至少有一个参数
@@ -312,7 +364,15 @@ command=${params[0]}
 subrepo_name=${params[${#params[@]} - 1]}
 
 # 检查 subrepo_name 是不是在配置文件中的
-
+if [ "$command" != "add" ]; then
+    subrepo_url=$(config ".gitsubrepo" "get" "$subrepo_name")
+    echo $subrepo_url | grep ERROR
+    if [ $? -eq 0 ]; then
+        log "ERROR"  "subrepo：${subrepo_name} 未配置"
+        useage
+        exit 1
+    fi
+fi
 
 # 移除数组中的第一个和最后一个元素
 params_pass=("${params[@]:1:(${#params[@]} - 2)}")
@@ -328,13 +388,13 @@ done
 # 根据命令调用对应的函数
 case $command in
     init)
-        init "${params_pass[@]} $subrepo_name"
+        init "${params_pass[@]}" "$subrepo_name"
         ;;
     del)
-        del "${params_pass[@]} $subrepo_name"
+        del "${params_pass[@]}" "$subrepo_name"
         ;;
     add)
-        add "${params_pass[@]} $subrepo_name"
+        add "${params_pass[@]}" "$subrepo_name"
         ;;
     fetch)
         SAVED_PATH=$(pwd)
