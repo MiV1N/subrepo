@@ -13,7 +13,7 @@ useage(){
 }
 
 # 全局日志级别变量，用于控制日志输出
-LOG_LEVEL="DEBUG" # 可以设置为 INFO, DEBUG, ERROR, NONE
+LOG_LEVEL="INFO" # 可以设置为 INFO, DEBUG, ERROR, NONE
 
 # ANSI 颜色代码
 RED='\033[0;31m'
